@@ -2,8 +2,8 @@ use axum::{
     routing::get,
     Router,
 };
-use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 mod state;
 mod frame;
@@ -20,8 +20,6 @@ const MAX_CATCHUP_FRAMES: usize = 500; // Maximum number of P-frames to send for
 #[tokio::main]
 async fn main() {
     let state = AppState::new(STATE_SIZE, FRAME_BUFFER_SIZE);
-    let (tx, _) = broadcast::channel(100);
-
     let app_state = Arc::new(Mutex::new(state));
 
     let app = Router::new()
