@@ -31,7 +31,7 @@ async fn main() {
         .with_state(app_state);
 
     println!("Server running on http://localhost:3000");
-    axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
+    axum::Server::bind(&"0.0.0.0:8081".parse().unwrap())
         .serve(app.into_make_service())
         .await
         .unwrap();
