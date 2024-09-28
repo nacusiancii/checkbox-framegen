@@ -5,6 +5,7 @@ use axum::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use reqwest::Client;
+use bitvec::prelude::BitVec;
 mod state;
 mod frame;
 mod websocket;
