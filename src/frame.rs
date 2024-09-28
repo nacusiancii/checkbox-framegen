@@ -6,6 +6,15 @@ pub enum Frame {
     PFrame { version: usize, timestamp: u64, changes: Vec<(usize, bool)> },
 }
 
+impl Frame {
+    pub fn version(&self) -> usize {
+        match self {
+            Frame::IFrame { version, .. } => *version,
+            Frame::PFrame { version, .. } => *version,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct ClientMessage {
     pub last_version: usize,
