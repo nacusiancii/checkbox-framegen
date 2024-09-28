@@ -3,7 +3,6 @@ use axum::{
     extract::State,
     response::IntoResponse,
 };
-use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::state::AppState;
@@ -34,7 +33,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<Mutex<AppState>>) {
                 }
             }
             Ok(frame) = rx.recv() => {
-                if let Err(_) = socket.send(Message::Binary(bincode::serialize(&frame).unwrap())).await {
+                if socket.send(Message::Binary(bincode::serialize(&frame).unwrap())).await.is_err() {
                     break;
                 }
             }
@@ -44,29 +43,31 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<Mutex<AppState>>) {
 }
 
 async fn send_initial_state(socket: &mut WebSocket, state: &Arc<Mutex<AppState>>) {
-    let state = state.lock().await;
+    let state_guard = state.lock().await;
     let initial_frame = Frame::IFrame {
-        version: state.version,
+        version: state_guard.version,
         timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs(),
-        data: state.state.clone().into_vec(),
+        data: state_guard.state.clone().into_vec(),
     };
+    drop(state_guard);
     let _ = socket
         .send(Message::Binary(bincode::serialize(&initial_frame).unwrap()))
         .await;
 }
 
 async fn handle_client_message(socket: &mut WebSocket, state: &Arc<Mutex<AppState>>, msg: ClientMessage) {
-    let state = state.lock().await;
-    if msg.last_version < state.version {
-        if state.version - msg.last_version > crate::MAX_CATCHUP_FRAMES {
+    let state_guard = state.lock().await;
+    if msg.last_version < state_guard.version {
+        if state_guard.version - msg.last_version > crate::MAX_CATCHUP_FRAMES {
             // Too many missed frames, send full state
+            drop(state_guard);
             send_initial_state(socket, state).await;
         } else {
             // Send missed frames
-            for frame in state.frame_buffer.iter().filter(|f| f.version() > msg.last_version) {
+            for frame in state_guard.frame_buffer.iter().filter(|f| f.version() > msg.last_version) {
                 let _ = socket
                     .send(Message::Binary(bincode::serialize(frame).unwrap()))
                     .await;
