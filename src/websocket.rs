@@ -3,8 +3,9 @@ use axum::{
     extract::State,
     response::IntoResponse,
 };
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use std::sync::{Arc, Mutex};
+use tokio::sync::broadcast;
 use crate::{state::AppState, frame::{Frame, ClientMessage}};
 
 pub async fn ws_handler(
@@ -14,16 +15,16 @@ pub async fn ws_handler(
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
-async fn handle_socket(mut socket: WebSocket, state: Arc<Mutex<AppState>>) {
+async fn handle_socket(socket: WebSocket, state: Arc<Mutex<AppState>>) {
+    let (mut sender, mut receiver) = socket.split();
+
     let mut rx = {
         let state = state.lock().unwrap();
         state.tx.subscribe()
     };
 
     // Send initial I-frame
-    send_initial_frame(&mut socket, &state).await;
-
-    let (mut sender, mut receiver) = socket.split();
+    send_initial_frame(&mut sender, &state).await;
 
     // Handle incoming messages (including reconnection requests)
     let state_clone = state.clone();
@@ -58,14 +59,14 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<Mutex<AppState>>) {
     };
 }
 
-async fn send_initial_frame(socket: &mut WebSocket, state: &Arc<Mutex<AppState>>) {
+async fn send_initial_frame(sender: &mut futures::stream::SplitSink<WebSocket, Message>, state: &Arc<Mutex<AppState>>) {
     let state = state.lock().unwrap();
     let initial_frame = Frame::IFrame {
         version: state.version,
         timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
         data: state.state.clone().into_vec(),
     };
-    let _ = socket
+    let _ = sender
         .send(Message::Binary(bincode::serialize(&initial_frame).unwrap()))
         .await;
 }
@@ -75,33 +76,39 @@ async fn handle_client_reconnect(
     state: &Arc<Mutex<AppState>>,
     client_version: usize,
 ) {
-    let state = state.lock().unwrap();
-    let current_version = state.version;
+    let current_version;
+    let missed_frames: Vec<Frame>;
 
-    if client_version == current_version {
-        // Client is up-to-date
-        return;
-    }
+    {
+        let state = state.lock().unwrap();
+        current_version = state.version;
 
-    if current_version - client_version > crate::MAX_CATCHUP_FRAMES || client_version > current_version {
-        // Too many missed frames or client version is in the future, send full state
-        drop(state); // Unlock the mutex before calling send_initial_frame
-        let mut socket = WebSocket::from_raw_socket(sender.get_mut().get_mut(), Default::default(), None).await;
-        send_initial_frame(&mut socket, state).await;
-    } else {
-        // Send missed P-frames
-        let missed_frames: Vec<Frame> = state.frame_buffer
+        if client_version == current_version {
+            // Client is up-to-date
+            return;
+        }
+
+        if current_version - client_version > crate::MAX_CATCHUP_FRAMES || client_version > current_version {
+            // Too many missed frames or client version is in the future, send full state
+            drop(state); // Unlock the mutex before calling send_initial_frame
+            send_initial_frame(sender, state).await;
+            return;
+        }
+
+        // Collect missed P-frames
+        missed_frames = state.frame_buffer
             .iter()
             .filter(|frame| match frame {
                 Frame::IFrame { version, .. } | Frame::PFrame { version, .. } => *version > client_version
             })
             .cloned()
             .collect();
+    }
 
-        for frame in missed_frames {
-            let _ = sender
-                .send(Message::Binary(bincode::serialize(&frame).unwrap()))
-                .await;
-        }
+    // Send missed P-frames
+    for frame in missed_frames {
+        let _ = sender
+            .send(Message::Binary(bincode::serialize(&frame).unwrap()))
+            .await;
     }
 }
