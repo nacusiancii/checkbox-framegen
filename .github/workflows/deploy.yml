@@ -1,0 +1,63 @@
+name: Deploy Million Checkboxes to EC2
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cache Cargo registry
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
+    - name: Build
+      run: cargo build
+
+    - name: Deploy to EC2
+      env:
+        PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        HOST: ${{ secrets.EC2_HOST }}
+        USER: ${{ secrets.EC2_USER }}
+      run: |
+        echo "$PRIVATE_KEY" > private_key
+        chmod 600 private_key
+                ssh -i private_key -o StrictHostKeyChecking=no ${USER}@${HOST} '
+          echo "Stopping existing server..."
+          pkill framegen || true
+          sleep 5
+          echo "Ensuring process is stopped..."
+          if pgrep framegen; then
+            echo "Process still running, forcing stop..."
+            pkill -9 framegen || true
+            sleep 2
+          fi
+          echo "Removing old binary..."
+          rm -f ~/rust/app/framegen
+        '
+        echo "Copying new binary..."
+        scp -i private_key -o StrictHostKeyChecking=no target/debug/framegen ${USER}@${HOST}:~/rust/app/
+        ssh -i private_key -o StrictHostKeyChecking=no ${USER}@${HOST} '
+          echo "Starting new server..."
+          cd ~/rust/app
+          nohup ./framegen > framegen.log 2>&1 &
+          echo "Waiting for server to start..."
+          sleep 5
+          if pgrep framegen; then
+            echo "Server started successfully"
+          else
+            echo "Server failed to start"
+            tail -n 50 output.log
+            exit 1
+          fi
+        '
