@@ -4,8 +4,8 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
-use std::sync::{Arc, Mutex};
-use tokio::sync::broadcast;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use crate::{state::AppState, frame::{Frame, ClientMessage}};
 
 pub async fn ws_handler(
@@ -19,7 +19,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<Mutex<AppState>>) {
     let (mut sender, mut receiver) = socket.split();
 
     let mut rx = {
-        let state = state.lock().unwrap();
+        let mut state = state.lock().await;
         state.tx.subscribe()
     };
 
@@ -60,12 +60,13 @@ async fn handle_socket(socket: WebSocket, state: Arc<Mutex<AppState>>) {
 }
 
 async fn send_initial_frame(sender: &mut futures::stream::SplitSink<WebSocket, Message>, state: &Arc<Mutex<AppState>>) {
-    let state = state.lock().unwrap();
+    let state = state.lock().await;
     let initial_frame = Frame::IFrame {
         version: state.version,
         timestamp: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
         data: state.state.clone().into_vec(),
     };
+    drop(state); // Release the lock before sending
     let _ = sender
         .send(Message::Binary(bincode::serialize(&initial_frame).unwrap()))
         .await;
@@ -80,7 +81,7 @@ async fn handle_client_reconnect(
     let missed_frames: Vec<Frame>;
 
     {
-        let state = state.lock().unwrap();
+        let state = state.lock().await;
         current_version = state.version;
 
         if client_version == current_version {
