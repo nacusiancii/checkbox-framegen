@@ -5,6 +5,7 @@ use axum::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use reqwest::Client;
+use bitvec::prelude::BitVec;
 mod state;
 mod frame;
 mod websocket;
@@ -43,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Server running on http://localhost:8081");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8081").await.unwrap();
     axum::serve(listener, app).await.unwrap();
+    Ok(())
 }
 
 async fn fetch_initial_state(client: &Client) -> Result<BitVec, Box<dyn std::error::Error>> {
