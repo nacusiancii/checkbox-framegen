@@ -11,15 +11,27 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(state_size: usize, buffer_size: usize) -> Self {
-        let state = BitVec::repeat(false, state_size);
+    pub fn new(initial_state: BitVec, buffer_size: usize) -> Self {
         let (tx, _) = broadcast::channel(buffer_size);
-        AppState {
-            state,
+        let mut app_state = AppState {
+            state: initial_state,
             version: 0,
             tx,
             frame_buffer: VecDeque::with_capacity(buffer_size),
-        }
+        };
+        
+        // Create and store initial I-frame
+        let initial_frame = Frame::IFrame {
+            version: 0,
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            data: app_state.state.clone().into_vec(),
+        };
+        app_state.frame_buffer.push_back(initial_frame);
+        
+        app_state
     }
 
     pub fn update(&mut self, changes: Vec<(usize, bool)>) {
@@ -28,16 +40,16 @@ impl AppState {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let mut changed_indices = Vec::new();
 
+        let mut changed_indices = Vec::new();
         for (index, value) in changes {
-            if self.state[index] != value {
+            if index < self.state.len() && self.state[index] != value {
                 self.state.set(index, value);
                 changed_indices.push((index, value));
             }
         }
 
-        let frame = if self.version % crate::I_FRAME_INTERVAL == 0 {
+        let frame = if self.version % I_FRAME_INTERVAL == 0 {
             Frame::IFrame {
                 version: self.version,
                 timestamp,
@@ -52,7 +64,7 @@ impl AppState {
         };
 
         self.frame_buffer.push_back(frame.clone());
-        if self.frame_buffer.len() > crate::FRAME_BUFFER_SIZE {
+        if self.frame_buffer.len() > FRAME_BUFFER_SIZE {
             self.frame_buffer.pop_front();
         }
 
