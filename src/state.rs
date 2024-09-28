@@ -2,6 +2,7 @@ use bitvec::prelude::*;
 use std::collections::VecDeque;
 use tokio::sync::broadcast;
 use crate::frame::Frame;
+use crate::{I_FRAME_INTERVAL, FRAME_BUFFER_SIZE};
 
 pub struct AppState {
     pub state: BitVec,
