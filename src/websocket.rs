@@ -84,7 +84,7 @@ async fn handle_client_reconnect(
     if current_version - client_version > crate::MAX_CATCHUP_FRAMES || client_version > current_version {
         // Too many missed frames or client version is in the future, send full state
         drop(state); // Unlock the mutex before calling send_initial_frame
-        send_initial_frame(socket, state).await;
+        send_initial_frame(&mut socket, &state).await;
     } else {
         // Send missed P-frames
         let missed_frames: Vec<Frame> = state.frame_buffer
